@@ -1,0 +1,6 @@
+(defun fact (n)
+  (setq res 1)
+  (loop (neq n 1)
+		(setq res (* res n))
+		(setq n (- n 1)))
+  res)
