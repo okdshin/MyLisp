@@ -19,13 +19,13 @@ namespace my {
 		using ptr = object*;
 
 		struct cons {
-			ptr car_{nullptr};
-			ptr cdr_{nullptr};
+			ptr car_;
+			ptr cdr_;
 		};
 		struct expr {
-			ptr args_{nullptr};
-			ptr body_{nullptr};
-			ptr env_{nullptr};
+			ptr args_;
+			ptr body_;
+			ptr env_;
 		};
 		using subr = std::function<ptr (ptr)>;
 
@@ -291,6 +291,38 @@ namespace my {
 		}
 	}
 
+
+	decltype(auto) is_space(char c) {
+		return c == '\t' || c == '\r' || c == '\n' || c == ' ';
+	}
+	
+	namespace token {
+		constexpr auto left_par = '(';
+		constexpr auto right_par = ')';
+		constexpr auto quote = '\'';
+	}// namespace token
+
+	decltype(auto) is_delimiter(char c) {
+		return c == my::token::left_par || 
+			c == my::token::right_par || 
+			c == my::token::quote || 
+			my::is_space(c);
+	}
+
+	decltype(auto) make_num_or_sym(std::string const& str, my::storage& s) {
+		try {
+			std::size_t pos;
+			auto num = std::stoi(str, &pos);
+			return pos == str.size() ? my::make_num(num, s) : my::make_sym(str, s);
+		}
+		catch(std::invalid_argument) {
+			return my::make_sym(str, s);
+		}
+		catch(std::out_of_range) {
+			throw "too big num"; //TODO
+		}
+	}
+	
 	decltype(auto) make_env(my::storage& s) {
 		auto env = my::make_cons(my::constant::nilp, my::constant::nilp, s);
 		my::add_to_env(my::make_sym("eq", s), my::make_subr([&s](auto args) {
@@ -358,39 +390,21 @@ namespace my {
 				return my::make_num(x->data_.num_ - y->data_.num_, s);
 			}, s
 		), env, s);
+		my::add_to_env(my::make_sym("input", s), my::make_subr([&s](auto args) {
+				std::cout << "input called" << std::endl;
+				std::string str;
+				std::cin >> str;
+				std::cout << str.length();
+				return my::make_num_or_sym(str, s);
+			}, s
+		), env, s);
+		my::add_to_env(my::make_sym("print", s), my::make_subr([&s](auto args) {
+				std::cout << *my::safe_car(args) << std::endl;
+				return my::constant::nilp;
+			}, s
+		), env, s);
 		my::add_to_env(my::make_sym("t", s), my::make_sym("t", s), env, s);
 		return env;
-	}
-
-	decltype(auto) is_space(char c) {
-		return c == '\t' || c == '\r' || c == '\n' || c == ' ';
-	}
-	
-	namespace token {
-		constexpr auto left_par = '(';
-		constexpr auto right_par = ')';
-		constexpr auto quote = '\'';
-	}// namespace token
-
-	decltype(auto) is_delimiter(char c) {
-		return c == my::token::left_par || 
-			c == my::token::right_par || 
-			c == my::token::quote || 
-			my::is_space(c);
-	}
-
-	decltype(auto) make_num_or_sym(std::string const& str, my::storage& s) {
-		try {
-			std::size_t pos;
-			auto num = std::stoi(str, &pos);
-			return pos == str.size() ? my::make_num(num, s) : my::make_sym(str, s);
-		}
-		catch(std::invalid_argument) {
-			return my::make_sym(str, s);
-		}
-		catch(std::out_of_range) {
-			throw "too big num"; //TODO
-		}
 	}
 
 	template<typename Iter>
@@ -457,17 +471,17 @@ namespace my {
 
 	template<typename Iter>
 	my::parse_result<Iter> parse(Iter first, Iter const& last, my::storage& s) {
-		first = my::skip_spaces(std::forward<Iter>(first), last);
+		first = my::skip_spaces(std::move(first), last);
 		if(first == last) {
 			throw "parse error"; //TODO
-		}
+		} else 
 		if(*first == my::token::right_par) {
 			throw "invalid syntax"; //TODO
-		}
+		} else
 		if(*first == my::token::left_par) {
 			++first;
 			return my::parse_list(std::move(first), last, s);
-		}
+		} else
 		if(*first == my::token::quote) {
 			++first;
 			auto res = my::parse(std::move(first), last, s);
@@ -617,14 +631,14 @@ int main(int argc, const char* argv[]) {
 		try {
 			std::cout << "load " << argv[1] << std::endl;
 			std::ifstream ifs{argv[1]};
-			/*
 			auto load_obj = my::parse(std::istreambuf_iterator<char>(ifs),
 						 std::istreambuf_iterator<char>(), storage).obj_;
-			*/
 
+			/*
 			auto code = std::string(std::istreambuf_iterator<char>(ifs),
 						 std::istreambuf_iterator<char>());
 			auto load_obj = my::parse_str(code, storage).obj_;
+			*/
 			std::cout << *load_obj << std::endl;
 			std::cout << *my::eval(load_obj, root_env, storage) << std::endl;
 		}
