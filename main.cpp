@@ -31,11 +31,11 @@ namespace my {
 
 		struct data {
 			data() {}
-			data(int num) : num_{num} {}
-			data(std::string str) : str_{std::move(str)} {}
-			data(ptr car, ptr cdr) : cons_{car, cdr} {} 
-			data(ptr args, ptr body, ptr env) : expr_{args, body, env} {}
-			data(subr s) : subr_{s} {}
+			explicit data(int num) : num_{num} {}
+			explicit data(std::string str) : str_{std::move(str)} {}
+			explicit data(ptr car, ptr cdr) : cons_{car, cdr} {} 
+			explicit data(ptr args, ptr body, ptr env) : expr_{args, body, env} {}
+			explicit data(subr s) : subr_{s} {}
 
 			int num_;
 			std::string str_;
@@ -45,7 +45,7 @@ namespace my {
 		};
 
 		object(my::label l) : label_(l) {}
-		object(my::label l, data d) : label_(l), data_(std::move(d)) {}
+		object(my::label l, data d) : label_(l), data_(d) {}
 
 		decltype(auto) label() const { return label_; }
 		decltype(auto) is_marked() const { return is_marked_; }
@@ -185,8 +185,8 @@ namespace my {
 			}
 		}
 
-		decltype(auto) create(my::object&& o) {
-			objects_.push_back(std::make_unique<my::object>(std::move(o))); 
+		decltype(auto) create(my::object const& o) {
+			objects_.push_back(std::make_unique<my::object>(o)); 
 			return objects_.back().get();
 		}
 
@@ -399,7 +399,11 @@ namespace my {
 			}, s
 		), env, s);
 		my::add_to_env(my::make_sym("print", s), my::make_subr([&s](auto args) {
-				std::cout << *my::safe_car(args) << std::endl;
+				//std::cout << *my::safe_car(args) << std::endl;
+				auto p = my::safe_car(args);
+				if(p->label() == my::label::nil) { std::cout << "nil"; }
+				else if(p->label() == my::label::num) { std::cout << p->data_.num_; }
+				else if(p->label() == my::label::sym) { std::cout << p->data_.str_; }
 				return my::constant::nilp;
 			}, s
 		), env, s);
@@ -444,29 +448,30 @@ namespace my {
 	decltype(auto) parse_list(Iter first, Iter const& last, my::storage& s) {
 		auto ret = my::constant::nilp;
 		while(true) {
-			first = my::skip_spaces(std::move(first), last);
+			first = my::skip_spaces(first, last);
 			if(first == last) {
 				throw "unfinished parenthesis"; //TODO
 			}
 			if(*first == my::token::right_par) {
 				break;
 			}
-			auto res = my::parse(first, last, s);
-			ret = my::make_cons(res.obj_, ret, s);
+			auto res = my::parse(std::forward<Iter>(first), last, s);
 			first = res.current_;
+			ret = my::make_cons(res.obj_, ret, s);
 		}
 		++first;
 		return my::make_parse_result(std::move(first), my::nreverse(ret, s));
 	}
 
 	template<typename Iter>
-	decltype(auto) parse_atom(Iter const& first, Iter const& last, my::storage& s) {
+	decltype(auto) parse_atom(Iter&& first, Iter const& last, my::storage& s) {
 		auto current = first;
 		while(!my::is_delimiter(*current)) {
 			++current;
 		}
+		auto str = std::string{std::forward<Iter>(first), current};
 		return my::make_parse_result(
-			current, my::make_num_or_sym(std::string(first, current), s));
+			std::move(current), my::make_num_or_sym(std::move(str), s));
 	}
 
 	template<typename Iter>
@@ -495,7 +500,7 @@ namespace my {
 			);
 		}
 		else {
-			return my::parse_atom(first, last, s);
+			return my::parse_atom(std::move(first), last, s);
 		}
 	}
 
@@ -631,14 +636,13 @@ int main(int argc, const char* argv[]) {
 		try {
 			std::cout << "load " << argv[1] << std::endl;
 			std::ifstream ifs{argv[1]};
+			/*
 			auto load_obj = my::parse(std::istreambuf_iterator<char>(ifs),
 						 std::istreambuf_iterator<char>(), storage).obj_;
-
-			/*
+			*/
 			auto code = std::string(std::istreambuf_iterator<char>(ifs),
 						 std::istreambuf_iterator<char>());
 			auto load_obj = my::parse_str(code, storage).obj_;
-			*/
 			std::cout << *load_obj << std::endl;
 			std::cout << *my::eval(load_obj, root_env, storage) << std::endl;
 		}
