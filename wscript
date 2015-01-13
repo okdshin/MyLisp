@@ -14,7 +14,7 @@ def configure(conf):
 def build(bld):
     bld.program(features = "cxx cprogram",
         source = "main.cpp",
-        cxxflags = ["-std=c++14", "-g", "-Wall"],
+        cxxflags = ["-std=c++14", "-g", "-O3", "-Wall"],
         #lib = ["boost_system", "boost_filesystem"],
         #uselib=["OPENCV"]
         target = "a.out",

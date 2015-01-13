@@ -12,11 +12,29 @@
 #include <map>
 
 namespace my {
-	enum class label { nil, num, sym, cons, subr, expr };
+	enum class tag { uninit, nil, num, sym, cons, subr, expr };
 	
 	class object {
 	public:
-		using ptr = object*;
+		class ptr {
+		public:
+			ptr() : tag_(my::tag::uninit), ptr_(nullptr) {}
+			decltype(auto) operator==(ptr o) { return ptr_ == o.ptr_; }
+			decltype(auto) operator!=(ptr o) { return ptr_ != o.ptr_; }
+			explicit ptr(object* p) : tag_(p->tag()), ptr_(p) {}
+			decltype(auto) tag() const { return tag_; }
+			decltype(auto) get() { return (ptr_); }
+			decltype(auto) get() const { return const_cast<object const*>(ptr_); }
+			decltype(auto) operator->() { return (ptr_); }
+			decltype(auto) operator->() const { return const_cast<object const*>(ptr_); }
+			decltype(auto) operator*() { return *ptr_; }
+			decltype(auto) operator*() const { return const_cast<object const&>(*ptr_); }
+			operator bool() const { return static_cast<bool>(ptr_); }
+
+		private:
+			my::tag tag_;
+			object* ptr_;
+		};
 
 		struct cons {
 			ptr car_;
@@ -44,30 +62,30 @@ namespace my {
 			subr subr_;
 		};
 
-		object(my::label l) : label_(l) {}
-		object(my::label l, data d) : label_(l), data_(d) {}
+		object(my::tag l) : tag_(l) {}
+		object(my::tag l, data d) : tag_(l), data_(d) {}
 
-		decltype(auto) label() const { return label_; }
+		my::tag tag() const { return tag_; }
 		decltype(auto) is_marked() const { return is_marked_; }
 
 		decltype(auto) mark() { is_marked_ = true; }
 		decltype(auto) unmark() { assert(is_marked_); is_marked_ = false; }
 
 		friend std::ostream& operator<<(std::ostream& os, object const& o) {
-			if(o.label() == my::label::nil) {
+			if(o.tag() == my::tag::nil) {
 				os << "nil";
 			} else
-			if(o.label() == my::label::num) {
+			if(o.tag() == my::tag::num) {
 				os << "num:" << o.data_.num_;
 			} else
-			if(o.label() == my::label::sym) {
+			if(o.tag() == my::tag::sym) {
 				os << "sym:" << o.data_.str_;
 			} else
-			if(o.label() == my::label::cons) {
-				auto list = &o;
+			if(o.tag() == my::tag::cons) {
+				auto list = my::object::ptr(const_cast<my::object*>(std::addressof(o)));
 				auto first = true;
 				std::ostringstream oss{};
-				while(list->label() == my::label::cons) {
+				while(list.tag() == my::tag::cons) {
 					if(first) {
 						first = false;
 					}
@@ -77,28 +95,28 @@ namespace my {
 					oss << *(list->data_.cons_.car_);
 					list = list->data_.cons_.cdr_;
 				}
-				if(list->label() == my::label::nil) {
+				if(list.tag() == my::tag::nil) {
 					os << "(" << oss.str() << ")";
 				}
 				else {
 					os << "(" << oss.str() << " . " << *list << ")";
 				}
 			} else
-			if(o.label() == my::label::subr) {
+			if(o.tag() == my::tag::subr) {
 				assert(o.data_.subr_);
 				os << "subr:" << o.data_.subr_.target_type().name();
 			} else
-			if(o.label() == my::label::expr) {
+			if(o.tag() == my::tag::expr) {
 				os << "expr:"
 					<< "args:" << *(o.data_.expr_.args_)
 					<< "body:" << *(o.data_.expr_.body_)
-					<< "env:" << (o.data_.expr_.env_);
+					<< "env:" << o.data_.expr_.env_.get();
 			}
 			return os;
 		}
 
 	private:
-		my::label label_;
+		my::tag tag_;
 		bool is_marked_{false};
 
 	public:
@@ -106,19 +124,19 @@ namespace my {
 	};
 
 	namespace constant {
-		auto nil = my::object{my::label::nil};
-		auto nilp = &my::constant::nil;
+		auto nil = my::object{my::tag::nil};
+		auto nilp = my::object::ptr(std::addressof(my::constant::nil));
 	}// namespac econstant
 
 	void mark(object::ptr obj) {
 		if(obj->is_marked()) { return; }
 		//std::cout << obj << " is marked" << std::endl;
 		obj->mark();
-		if(obj->label() == my::label::cons) {
+		if(obj.tag() == my::tag::cons) {
 			my::mark(obj->data_.cons_.car_);
 			my::mark(obj->data_.cons_.cdr_);
 		}else
-		if(obj->label() == my::label::expr) {
+		if(obj.tag() == my::tag::expr) {
 			my::mark(obj->data_.expr_.args_);
 			my::mark(obj->data_.expr_.body_);
 			my::mark(obj->data_.expr_.env_);
@@ -130,7 +148,7 @@ namespace my {
 	decltype(auto) print(std::ostream& os, my::sym_table const& table) {
 		os << "symbol table {\n";
 		for(auto const& p : table) {
-			os << "\t" << p.first << ":" << p.second << "\n";
+			os << "\t" << p.first << ":" << p.second.get() << "\n";
 		}
 		os << "}\n";
 		return (os);
@@ -140,7 +158,7 @@ namespace my {
 		std::vector<std::unique_ptr<my::object>>& objects,
 		my::sym_table& sym_table
 	) {
-		for(auto& e : objects) {
+		for(std::unique_ptr<my::object>& e : objects) {
 			/*
 			std::cout << e.get() << " is " << 
 				(e->is_marked() ? "marked" : "not marked") << std::endl;
@@ -150,7 +168,7 @@ namespace my {
 				std::cout << e.get() << ":" << *e << " is not marked" << std::endl;
 			}
 			*/
-			if(!e->is_marked() && e->label() == my::label::sym) {
+			if(!e->is_marked() && e->tag() == my::tag::sym) {
 				sym_table.erase(e->data_.str_);
 			}
 		}
@@ -162,11 +180,11 @@ namespace my {
 	}
 
 	decltype(auto) safe_car(my::object::ptr o) {
-		return o->label() == my::label::cons ? o->data_.cons_.car_ : my::constant::nilp;
+		return o.tag() == my::tag::cons ? o->data_.cons_.car_ : my::constant::nilp;
 	}
 
 	decltype(auto) safe_cdr(my::object::ptr o) {
-		return o->label() == my::label::cons ? o->data_.cons_.cdr_ : my::constant::nilp;
+		return o.tag() == my::tag::cons ? o->data_.cons_.cdr_ : my::constant::nilp;
 	}
 
 	class storage {
@@ -187,11 +205,11 @@ namespace my {
 
 		decltype(auto) create(my::object const& o) {
 			objects_.push_back(std::make_unique<my::object>(o)); 
-			return objects_.back().get();
+			return my::object::ptr(objects_.back().get());
 		}
 
 		decltype(auto) create_num(int num) {
-			return create(my::object{my::label::num, my::object::data{num}});
+			return create(my::object{my::tag::num, my::object::data{num}});
 		}
 
 		decltype(auto) create_sym(std::string str) {
@@ -199,7 +217,7 @@ namespace my {
 			auto iter = sym_table_.find(str);
 			if(iter == sym_table_.end()) {
 				auto sym = create(
-					my::object{my::label::sym, my::object::data{std::move(str)}});
+					my::object{my::tag::sym, my::object::data{std::move(str)}});
 				sym_table_[sym->data_.str_] = sym;
 				return sym;
 			}
@@ -209,23 +227,23 @@ namespace my {
 		}
 
 		decltype(auto) create_cons(object::ptr car, object::ptr cdr) {
-			return create(my::object{my::label::cons, my::object::data{car, cdr}});
+			return create(my::object{my::tag::cons, my::object::data{car, cdr}});
 		}
 
 		decltype(auto) create_subr(my::object::subr s) {
-			return create(my::object{my::label::subr, my::object::data{s}});
+			return create(my::object{my::tag::subr, my::object::data{s}});
 		}
 
 		decltype(auto) create_expr(
 			my::object::ptr args, my::object::ptr body, my::object::ptr env
 		) {
-			return create(my::object{my::label::expr, my::object::data{args, body, env}});
+			return create(my::object{my::tag::expr, my::object::data{args, body, env}});
 		}
 
 		friend std::ostream& operator<<(std::ostream& os, storage const& s) {
 			my::print(os, s.sym_table_);
 			for(auto const& o : s.objects_) {
-				os << static_cast<void*>(o.get()) << ":" << *o << "\n";
+				os << o.get() << ":" << *o << "\n";
 			}
 			//print(os, const_cast<my::object::ptr>(std::addressof(s.env_)));
 			return os;
@@ -259,9 +277,9 @@ namespace my {
 	}
 
 	decltype(auto) find_var(my::object::ptr sym, my::object::ptr env) {
-		while(env->label() == my::label::cons) {
+		while(env.tag() == my::tag::cons) {
 			auto alist = env->data_.cons_.car_;
-			while(alist->label() == my::label::cons) {
+			while(alist.tag() == my::tag::cons) {
 				if(alist->data_.cons_.car_->data_.cons_.car_ == sym) {
 					return alist->data_.cons_.car_;
 				}
@@ -312,7 +330,7 @@ namespace my {
 	decltype(auto) make_num_or_sym(std::string const& str, my::storage& s) {
 		try {
 			std::size_t pos;
-			auto num = std::stoi(str, &pos);
+			auto num = std::stoi(str, std::addressof(pos));
 			return pos == str.size() ? my::make_num(num, s) : my::make_sym(str, s);
 		}
 		catch(std::invalid_argument) {
@@ -328,7 +346,7 @@ namespace my {
 		my::add_to_env(my::make_sym("eq", s), my::make_subr([&s](auto args) {
 				auto x = my::safe_car(args);
 				auto y = my::safe_car(my::safe_cdr(args));
-				if(x->label() == my::label::num && y->label() == my::label::num) {
+				if(x.tag() == my::tag::num && y.tag() == my::tag::num) {
 					return x->data_.num_ == y->data_.num_ ?
 						my::make_sym("t", s) : my::constant::nilp;
 				}
@@ -340,7 +358,7 @@ namespace my {
 		my::add_to_env(my::make_sym("neq", s), my::make_subr([&s](auto args) {
 				auto x = my::safe_car(args);
 				auto y = my::safe_car(my::safe_cdr(args));
-				if(x->label() == my::label::num && y->label() == my::label::num) {
+				if(x.tag() == my::tag::num && y.tag() == my::tag::num) {
 					return x->data_.num_ != y->data_.num_ ?
 						my::make_sym("t", s) : my::constant::nilp;
 				}
@@ -359,8 +377,8 @@ namespace my {
 		), env, s);
 		my::add_to_env(my::make_sym("*", s), my::make_subr([&s](auto args) {
 				auto ret = 1;
-				while(args->label() == my::label::cons) {
-					if(args->data_.cons_.car_->label() != my::label::num) {
+				while(args.tag() == my::tag::cons) {
+					if(args->data_.cons_.car_.tag() != my::tag::num) {
 						throw "invalid type";
 					}
 					ret *= args->data_.cons_.car_->data_.num_;
@@ -371,8 +389,8 @@ namespace my {
 		), env, s);
 		my::add_to_env(my::make_sym("+", s), my::make_subr([&s](auto args) {
 				auto ret = 0;
-				while(args->label() == my::label::cons) {
-					if(args->data_.cons_.car_->label() != my::label::num) {
+				while(args.tag() == my::tag::cons) {
+					if(args->data_.cons_.car_.tag() != my::tag::num) {
 						throw "invalid type";
 					}
 					ret += args->data_.cons_.car_->data_.num_;
@@ -384,7 +402,7 @@ namespace my {
 		my::add_to_env(my::make_sym("-", s), my::make_subr([&s](auto args) {
 				auto x = my::safe_car(args);
 				auto y = my::safe_car(my::safe_cdr(args));
-				if(x->label() != my::label::num || y->label() != my::label::num) {
+				if(x.tag() != my::tag::num || y.tag() != my::tag::num) {
 					throw "invalid type";
 				}
 				return my::make_num(x->data_.num_ - y->data_.num_, s);
@@ -401,10 +419,30 @@ namespace my {
 		my::add_to_env(my::make_sym("print", s), my::make_subr([&s](auto args) {
 				//std::cout << *my::safe_car(args) << std::endl;
 				auto p = my::safe_car(args);
-				if(p->label() == my::label::nil) { std::cout << "nil"; }
-				else if(p->label() == my::label::num) { std::cout << p->data_.num_; }
-				else if(p->label() == my::label::sym) { std::cout << p->data_.str_; }
+				if(p.tag() == my::tag::nil) { std::cout << "nil"; }
+				else if(p.tag() == my::tag::num) { std::cout << p->data_.num_; }
+				else if(p.tag() == my::tag::sym) { std::cout << p->data_.str_; }
 				return my::constant::nilp;
+			}, s
+		), env, s);
+		my::add_to_env(my::make_sym("atom", s), my::make_subr([&s](auto args) {
+				return my::safe_car(args).tag() == my::tag::cons ?
+					my::constant::nilp : my::make_sym("t", s);
+			}, s
+		), env, s);
+		my::add_to_env(my::make_sym("cons", s), my::make_subr([&s](auto args) {
+				return my::make_cons(
+					my::safe_car(args), 
+					my::safe_car(my::safe_cdr(args)), s);
+			}, s
+		), env, s);
+		my::add_to_env(my::make_sym("system", s), my::make_subr([&s](auto args) {
+				auto command = my::safe_car(args);
+				if(command.tag() != my::tag::sym) {
+					return my::constant::nilp;
+				}
+				system(command->data_.str_.c_str());
+				return command;
 			}, s
 		), env, s);
 		my::add_to_env(my::make_sym("t", s), my::make_sym("t", s), env, s);
@@ -435,7 +473,7 @@ namespace my {
 
 	decltype(auto) nreverse(my::object::ptr o, my::storage& s) {
 		auto ret = my::constant::nilp;
-		while(o->label() == my::label::cons) {
+		while(o.tag() == my::tag::cons) {
 			auto temp = o->data_.cons_.cdr_;
 			o->data_.cons_.cdr_ = ret;
 			ret = o;
@@ -512,7 +550,7 @@ namespace my {
 
 	decltype(auto) eval_list(my::object::ptr list, my::object::ptr env, my::storage& s) {
 		auto ret = my::constant::nilp;
-		while(list->label() == my::label::cons) {
+		while(list.tag() == my::tag::cons) {
 			auto e = my::eval(list->data_.cons_.car_, env, s);
 			ret = my::make_cons(e, ret, s);
 			list = list->data_.cons_.cdr_;
@@ -522,7 +560,7 @@ namespace my {
 
 	decltype(auto) progn(my::object::ptr body, my::object::ptr env, my::storage& s) {
 		auto ret = my::constant::nilp;
-		while(body->label() == my::label::cons) {
+		while(body.tag() == my::tag::cons) {
 			ret = my::eval(body->data_.cons_.car_, env, s);
 			body = body->data_.cons_.cdr_;
 		}
@@ -545,7 +583,7 @@ namespace my {
 
 	decltype(auto) pairlis(my::object::ptr llist, my::object::ptr rlist, my::storage& s) {
 		auto ret = my::constant::nilp;
-		while(llist->label() == my::label::cons && rlist->label() == my::label::cons) {
+		while(llist.tag() == my::tag::cons && rlist.tag() == my::tag::cons) {
 			ret = my::make_cons(
 				my::make_cons(llist->data_.cons_.car_, rlist->data_.cons_.car_, s),
 				ret,
@@ -559,10 +597,10 @@ namespace my {
 
 	decltype(auto) apply(my::object::ptr func, my::object::ptr args, my::storage& s) {
 		//std::cout << *func << std::endl;
-		if(func->label() == my::label::subr) {
+		if(func.tag() == my::tag::subr) {
 			return func->data_.subr_(args);
 		} else
-		if(func->label() == my::label::expr) {
+		if(func.tag() == my::tag::expr) {
 			return my::progn(
 				func->data_.expr_.body_,
 				my::make_cons(
@@ -573,10 +611,10 @@ namespace my {
 	}
 
 	my::object::ptr eval(my::object::ptr obj, my::object::ptr env, my::storage& s) {
-		if(obj->label() == my::label::nil || obj->label() == my::label::num) {
+		if(obj.tag() == my::tag::nil || obj.tag() == my::tag::num) {
 			return obj;
 		}
-		if(obj->label() == my::label::sym) {
+		if(obj.tag() == my::tag::sym) {
 			auto bind = my::find_var(obj, env);
 			if(bind == my::constant::nilp) {
 				throw "no value"; //TODO
@@ -618,7 +656,7 @@ namespace my {
 		if(op->data_.str_ == "setq") {
 			auto val = my::eval(my::safe_car(my::safe_cdr(args)), env, s);
 			auto sym = my::safe_car(args);
-			if(sym->label() != my::label::sym) {
+			if(sym.tag() != my::tag::sym) {
 				throw "invalid argment"; //TODO
 			}
 			my::update_or_add_to_env(sym, val, env, s);
